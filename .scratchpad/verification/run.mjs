@@ -5,6 +5,7 @@ await server.listen();
 server.printUrls();
 try {
   await import('./browser-check.mjs');
+  await import('./pointer-lock-check.mjs');
   await import('./star-gpu-check.mjs');
   await import('./bridge-check.mjs');
   await import('./xr-session-check.mjs');

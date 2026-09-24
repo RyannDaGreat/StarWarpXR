@@ -111,7 +111,8 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
     if (immersive || !alive) return;
     immersive = true;
     try {
-      document.exitPointerLock();
+      // Pointer lock is desktop-only and absent on visionOS Safari.
+      document.exitPointerLock?.();
       scene.setXR(true); resetHistory(); onstatus({ immersive: true });
       xr = await startXR({ canvas: xrCanvas, source: canvas, spawn: scene.spawn, render,
         onshoot: scene.shoot,
@@ -161,11 +162,18 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
     yaw += event.movementX * LOOK_SENSITIVITY;
     pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch - event.movementY * LOOK_SENSITIVITY));
   }, { signal: listeners.signal });
-  canvas.addEventListener('click', () => {
+  canvas.addEventListener('click', async () => {
     if (immersive) return;
-    if (document.pointerLockElement !== canvas) { canvas.requestPointerLock().catch(onerror); return; }
-    const position = scene.physics.getPlayerEyePos();
-    scene.shoot([position.x, position.y, position.z], look());
+    try {
+      if (document.pointerLockElement !== canvas) {
+        if (!canvas.requestPointerLock) throw new Error('Desktop mouse-look is unavailable in this browser. Use Enter VR on your headset.');
+        // Older implementations return undefined rather than a Promise.
+        await canvas.requestPointerLock();
+        return;
+      }
+      const position = scene.physics.getPlayerEyePos();
+      scene.shoot([position.x, position.y, position.z], look());
+    } catch (error) { onerror(error); }
   }, { signal: listeners.signal });
   raf = requestAnimationFrame(desktop);
   return {
