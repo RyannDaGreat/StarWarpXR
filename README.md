@@ -1,4 +1,6 @@
-# Noise Warp VR
+# StarWarpXR
+
+[Open the demo](https://ryanndagreat.github.io/StarWarpXR/) · [GitHub repository](https://github.com/RyannDaGreat/StarWarpXR)
 
 A focused extraction of [web_demo_v3](https://ryanndagreat.github.io/infinite_resolution_integral_noise_warping_code/web_demo_v3/): **2 · Scene** and **7 · Stars**, with WebXR for Apple Vision Pro.
 
@@ -45,7 +47,7 @@ Tracking loss skips frames. A tracking-origin reset ends immersion with an expla
 
 ## GitHub deployment
 
-The repository includes `.github/workflows/pages.yml`. Add the intended GitHub remote, enable **Settings → Pages → Source: GitHub Actions**, and push `main`. The workflow runs unit tests, builds Vite and deploys `dist/` to an HTTPS Pages URL. Relative asset URLs support a project subpath. Headset development uses the Vite URL; GitHub Pages serves production builds without hot reload.
+The public repository is `RyannDaGreat/StarWarpXR`, with **Settings → Pages → Source: GitHub Actions** and HTTPS enforced. Every push to `main` runs `.github/workflows/pages.yml`: unit tests, Vite build, then deployment of `dist/` to https://ryanndagreat.github.io/StarWarpXR/. Relative asset URLs support the project subpath. Headset development uses the Vite URL; GitHub Pages serves production builds without hot reload.
 
 ## Source provenance
 
