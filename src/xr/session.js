@@ -16,7 +16,7 @@ const PANEL_WIDTH = 1200, PANEL_HEIGHT = 256, PANEL_GAP = 6;
  * @returns {Promise<object>} {session,end}; end() releases immersion idempotently.
  * @example await startXR(options) // {session: XRSession, end: Function}; requires a user gesture
  */
-export async function startXR({ canvas, source, device, spawn, render, onshoot, onteleport, controls, onend, onerror, onbackend = () => {} }) {
+export async function startXR({ canvas, source, device, spawn, render, onshoot, onteleport, controls, onend, onerror, onbackend = () => {}, isToolbarVisible = () => true }) {
   const actions = [...controls, ...['Shoot', 'Teleport', 'Exit'].map(label => ({ label }))];
   if (!isSecureContext) throw new Error('VR needs trusted HTTPS (localhost is only valid on the same device).');
   if (!navigator.xr) throw new Error('WebXR is unavailable. Use Safari on Vision Pro with WebXR enabled.');
@@ -85,7 +85,7 @@ export async function startXR({ canvas, source, device, spawn, render, onshoot, 
       for (const [index, { label: action }] of actions.entries()) {
         context.fillStyle = action === tool ? '#225d5d' : '#23304a';
         context.fillRect(index * cell + PANEL_GAP, PANEL_GAP, cell - 2 * PANEL_GAP, rowHeight - 2 * PANEL_GAP);
-        context.fillStyle = '#ffffff'; context.fillText(action, (index + .5) * cell, rowHeight / 2);
+        context.fillStyle = '#ffffff'; context.fillText(action, (index + .5) * cell, rowHeight / 2, cell - 2 * PANEL_GAP);
       }
       context.font = '26px system-ui'; context.fillStyle = '#bce6e1';
       context.fillText(notice, PANEL_WIDTH / 2, rowHeight * 1.5, PANEL_WIDTH - 24);
@@ -101,7 +101,7 @@ export async function startXR({ canvas, source, device, spawn, render, onshoot, 
         const target = event.frame.getPose(event.inputSource.targetRaySpace, reference);
         if (!target || !calibrated) return; // Tracking unavailable, not an input error.
         const ray = poseRay(worldPose(target.transform.matrix, origin));
-        const hit = panel ? panelHit(ray, panel) : null;
+        const hit = isToolbarVisible() && panel ? panelHit(ray, panel) : null;
         if (hit) {
           const cell = PANEL_WIDTH / actions.length;
           const x = hit[0] * PANEL_WIDTH, y = (1 - hit[1]) * PANEL_HEIGHT;
@@ -113,8 +113,7 @@ export async function startXR({ canvas, source, device, spawn, render, onshoot, 
             tool = action;
             notice = tool === 'Teleport' ? 'Look at a walkable surface and pinch to teleport.' : 'Look at a target and pinch to launch from your hand.';
           } else {
-            control.run();
-            notice = `${action} selected`;
+            notice = control.run() ?? `${action} selected`;
           }
           return;
         }
@@ -151,7 +150,7 @@ export async function startXR({ canvas, source, device, spawn, render, onshoot, 
           }
           localHead = viewer.transform.matrix;
           const head = worldPose(localHead, origin);
-          panel = panelPose(head);
+          panel = isToolbarVisible() ? panelPose(head) : null;
           const views = Array.from(viewer.views, xrView => {
             const pose = worldPose(xrView.transform.matrix, origin);
             const view = mat4.invert(mat4.create(), pose);
@@ -162,8 +161,8 @@ export async function startXR({ canvas, source, device, spawn, render, onshoot, 
           });
           if (views.length !== 2) throw new Error('This stereo bridge requires a two-view immersive headset.');
           const image = render(now, views, poseRay(head));
-          paintPanel();
-          presenter.upload(nativeGPU ? image : source, panelCanvas);
+          if (panel) paintPanel();
+          presenter.upload(nativeGPU ? image : source, panel ? panelCanvas : null);
           presenter.present(layer, views, panel);
         }
         session.requestAnimationFrame(frame);

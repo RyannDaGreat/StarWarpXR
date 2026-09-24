@@ -85,11 +85,12 @@ export function createGPUPresenter(device, session) {
     /**
      * Command. Borrow the SBS texture and copy the panel canvas without flipping its rows.
      * @param {GPUTexture} imageTexture - Sampleable (H,2W,4) RGBA SBS texture, e.g. 768×1536; not owned.
-     * @param {HTMLCanvasElement} panelCanvas - Canvas2D (H,W,4) RGBA panel, e.g. 256×1200.
+     * @param {HTMLCanvasElement|null} panelCanvas - Canvas2D (H,W,4) RGBA panel, e.g. 256×1200; null hides it.
      * @example presenter.upload(rendererTexture, controlsCanvas); // undefined; updates sampled textures
      */
     upload(imageTexture, panelCanvas) {
       imageView = imageTexture.createView();
+      if (!panelCanvas) return;
       const { width, height } = panelCanvas;
       if (!panelTexture || panelTexture.width !== width || panelTexture.height !== height) {
         panelTexture?.destroy();
@@ -107,7 +108,7 @@ export function createGPUPresenter(device, session) {
      * Command. Submit each eye's SBS half and spatial panel directly to native XR textures.
      * @param {XRProjectionLayer} layer - Destination projection layer.
      * @param {object[]} views - {xrView, eye, gpuViewProj}; matrix (16,) uses native Z in [0,1].
-     * @param {Float32Array} panelModel - Column-major unit-panel world transform (16,).
+     * @param {Float32Array|null} panelModel - Column-major unit-panel world transform (16,); null skips the panel.
      * @example presenter.present(presenter.layer, views, panelModel); // undefined; submits stereo frame
      */
     present(layer, views, panelModel) {
@@ -124,7 +125,7 @@ export function createGPUPresenter(device, session) {
         pass.setViewport(x, y, width, height, 0, 1);
         pass.setPipeline(pipeline);
         draw(pass, slot++, imageView, fullscreen, [view.eye === 'right' ? .5 : 0, 0, .5, 1]);
-        draw(pass, slot++, panelView, mat4.multiply(mat4.create(), view.gpuViewProj, panelModel), [0, 0, 1, 1]);
+        if (panelModel) draw(pass, slot++, panelView, mat4.multiply(mat4.create(), view.gpuViewProj, panelModel), [0, 0, 1, 1]);
         pass.end();
       }
       device.queue.submit([encoder.finish()]);

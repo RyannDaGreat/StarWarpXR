@@ -5,7 +5,8 @@ import { createSandboxAssets } from './scenes/sandbox/assets.js';
 import { createSandbox } from './scenes/sandbox/index.js';
 import { startXR } from './xr/session.js';
 
-const EYE_RESOLUTION = 768;
+export const EYE_RESOLUTIONS = [512, 768, 1024, 1536, 2048, 2560, 3072];
+export const DEFAULT_EYE_RESOLUTION = 1536;
 const LOOK_SENSITIVITY = 0.002;
 const PITCH_LIMIT = Math.PI / 2 - 0.01;
 const FOV = Math.PI / 3;
@@ -19,7 +20,7 @@ const CLIP_NEAR = 0.1, CLIP_FAR = 10000;
 export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
   if (!navigator.gpu) throw new Error('WebGPU is required. On Vision Pro, use visionOS 26 or later over trusted HTTPS.');
   const scene = await createSandbox();
-  const renderer = new WebGPURenderer(canvas, EYE_RESOLUTION, EYE_RESOLUTION, createSandboxAssets());
+  const renderer = new WebGPURenderer(canvas, DEFAULT_EYE_RESOLUTION, DEFAULT_EYE_RESOLUTION, createSandboxAssets());
   try { await renderer.init(); }
   catch (error) { scene.destroy(); renderer.destroy(); throw error; }
   const instances = new SceneManager();
@@ -41,6 +42,31 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
    * @example setMode(6) // undefined; switch to Stars and reset coordinate history
    */
   function setMode(value) { mode = value; resetHistory(); onstatus({ mode }); }
+
+  /**
+   * Command. Resize per-eye rendering without replacing the device or leaving VR.
+   * @param {number} value - One of EYE_RESOLUTIONS, in pixels per square eye.
+   * @returns {string} Human-readable in-VR confirmation.
+   * @example setResolution(2048) // 'Resolution: 2048 × 2048 per eye'
+   */
+  function setResolution(value) {
+    if (!EYE_RESOLUTIONS.includes(value)) throw new RangeError('Unsupported resolution preset');
+    renderer.resize(value, value);
+    previous.clear(); instances.prevTransforms.clear(); lastTime = null;
+    onstatus({ resolution: value });
+    return `Resolution: ${value} × ${value} per eye`;
+  }
+
+  /**
+   * Command. Move the resolution selection by one preset, clamped to available presets.
+   * @param {number} step - -1 for cheaper rendering, +1 for sharper rendering.
+   * @returns {string} In-VR resolution confirmation.
+   * @example stepResolution(1) // 'Resolution: 2048 × 2048 per eye' when at 1536
+   */
+  function stepResolution(step) {
+    const index = Math.max(0, Math.min(EYE_RESOLUTIONS.length - 1, EYE_RESOLUTIONS.indexOf(renderer.W) + step));
+    return setResolution(EYE_RESOLUTIONS[index]);
+  }
 
   /** Command. Reset this scene and its rendering history. */
   function reset() { scene.reset(); resetHistory(); }
@@ -127,6 +153,8 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
         controls: [
           { label: 'Scene', run: () => setMode(1) },
           { label: 'Stars', run: () => setMode(6) },
+          { label: 'Res −', run: () => stepResolution(-1) },
+          { label: 'Res +', run: () => stepResolution(1) },
           ...scene.xrControls.map(control => ({ label: control.label, run() { control.run(); resetHistory(); } })),
         ],
         onend() {
@@ -180,7 +208,7 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
   }, { signal: listeners.signal });
   raf = requestAnimationFrame(desktop);
   return {
-    scene, renderer, setMode, reset, enterVR,
+    scene, renderer, setMode, setResolution, reset, enterVR,
     /** Command. Stop animation/listeners, end immersion, then release GPU and physics resources. */
     async destroy() {
       alive = false; cancelAnimationFrame(raf); listeners.abort();

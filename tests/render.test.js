@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mat4, vec3, vec4 } from 'gl-matrix';
 import { WebGPURenderer, buildLightSpaceMatrix } from '../src/render/renderer.js';
 import { StarDraw } from '../src/render/star-draw.js';
+import { StarWarp } from '../src/stars/star-warp.js';
 import { displayWGSL } from '../src/render/shaders.js';
 import { sceneWGSL, skyWGSL, shadowWGSL } from '../src/scenes/sandbox/shaders.js';
 import { boxVertices, beveledBoxVertices, sphereVertices, terrainMeshVertices, terrainHeight } from '../src/scenes/sandbox/geometry.js';
@@ -42,7 +43,7 @@ function recordingDevice() {
         createCommandEncoder() {
             return {
                 beginRenderPass(desc) {
-                    const pass = { desc, draws: [], vertices: [], setPipeline() {}, setBindGroup() {}, setVertexBuffer(slot, buffer) { this.vertices.push(buffer); }, draw(...args) { this.draws.push(args); }, end() {} };
+                    const pass = { desc, draws: [], vertices: [], groups: [], setPipeline() {}, setBindGroup(slot, group) { this.groups.push(group); }, setVertexBuffer(slot, buffer) { this.vertices.push(buffer); }, draw(...args) { this.draws.push(args); }, end() {} };
                     passes.push(pass);
                     return pass;
                 },
@@ -84,6 +85,217 @@ function frameOptions() {
     const vp = mat4.perspectiveNO(mat4.create(), Math.PI / 3, 4 / 3, 0.1, 100);
     return { viewProj: vp, prevViewProj: vp, invViewProj: mat4.invert(mat4.create(), vp), instanceData: new Float32Array(), batches: [{ mesh: 'custom', firstInstance: 7, instanceCount: 2 }], displayMode: 1, frameSeed: 42 };
 }
+
+/**
+ * Command. Allocate real renderer/star adapters on a resource-counting mock GPU.
+ * @param {object} t - Test context; restores mocked WebGPU globals after the test.
+ * @returns {object} Renderer, device records and all allocated buffers/textures.
+ * @example resizeFixture(t).renderer.starDraw.W // 32
+ */
+function resizeFixture(t) {
+    const resources = [];
+    class Buffer {
+        /**
+         * Command. Record a mock allocation and its descriptor.
+         * @param {object} desc - Buffer/texture creation descriptor.
+         * @example new Buffer({size:64}).destroyCount // 0
+         */
+        constructor(desc) { Object.assign(this, desc); this.destroyCount = 0; resources.push(this); }
+        /** Command. Record release; duplicate releases remain observable. */
+        destroy() { this.destroyCount++; }
+    }
+    class Texture extends Buffer {
+        /** Query. Return a view retaining its source texture identity. */
+        createView() { return { texture: this }; }
+    }
+    const globals = { GPUBuffer: Buffer, GPUTexture: Texture,
+        GPUBufferUsage: { STORAGE: 1, COPY_SRC: 2, COPY_DST: 4, UNIFORM: 8, VERTEX: 16 },
+        GPUTextureUsage: { RENDER_ATTACHMENT: 1, TEXTURE_BINDING: 2 } };
+    for (const [key, value] of Object.entries(globals)) {
+        const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+        t.after(() => {
+            if (previous) Object.defineProperty(globalThis, key, previous);
+            else delete globalThis[key];
+        });
+        Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+    }
+    const records = fixture();
+    const { renderer, device } = records;
+    Object.assign(device, {
+        limits: { maxTextureDimension2D: 8192, maxStorageBufferBindingSize: 128 * 1024 ** 2,
+            maxBufferSize: 256 * 1024 ** 2, maxComputeWorkgroupsPerDimension: 65535 },
+        destroyCount: 0,
+        destroy() { this.destroyCount++; },
+        createBuffer: desc => new Buffer(desc),
+        createTexture: desc => new Texture(desc),
+        createShaderModule: desc => desc,
+        createComputePipeline: desc => ({ desc, getBindGroupLayout: () => ({}) }),
+        createRenderPipeline: desc => ({ desc, getBindGroupLayout: () => ({}) }),
+        createSampler: desc => desc,
+    });
+    const computePasses = [];
+    const createEncoder = device.createCommandEncoder;
+    device.createCommandEncoder = () => ({
+        ...createEncoder(), clearBuffer() {}, copyBufferToBuffer() {},
+        beginComputePass() {
+            const pass = { setPipeline() {}, setBindGroup(slot, group) { this.group = group; },
+                dispatchWorkgroups(count) { this.count = count; }, end() {} };
+            computePasses.push(pass);
+            return pass;
+        },
+    });
+    renderer.ctx.unconfigure = () => assert.fail('resize must retain canvas context');
+    renderer._createTextures();
+    renderer._createBuffers();
+    renderer._createPipelines();
+    renderer._createBindGroups();
+    renderer._createVertexBuffers();
+    renderer.stars = new StarWarp(device, renderer.W, renderer.H);
+    renderer.starStates = [];
+    renderer.resetHistory();
+    renderer.starDraw = new StarDraw(device, renderer.W, renderer.H);
+    renderer._createDisplayBindGroup();
+    return { ...records, resources, computePasses };
+}
+
+test('resize retains device/context/scene allocations, settings and count; replaces all owned targets without leaks', t => {
+    const { renderer, device, resources, writes, passes, computePasses } = resizeFixture(t);
+    const retainedNames = ['device', 'ctx', 'assets', 'meshes', 'quadVB', 'scenePipeline', 'skyPipeline',
+        'shadowPipeline', 'displayPipeline', 'cameraUniformBuf', 'cameraUniformBufR', 'shadowUniformBuf',
+        'skyUniformBuf', 'skyUniformBufR', 'lightUniformBuf', 'instanceBuf', 'displayUniformBuf'];
+    const retained = Object.fromEntries(retainedNames.map(name => [name, renderer[name]]));
+    const retainedBuffers = resources.filter(resource => resource instanceof GPUBuffer && !(resource instanceof GPUTexture)
+        && (Object.values(retained).includes(resource) || resource === renderer.meshes.custom.buffer));
+    const settings = { starAAEnabled: false, starColorQEnabled: true, starSizeQEnabled: true,
+        starSizeMaxPx: 13, cullOrphansEnabled: true };
+    Object.assign(renderer.starDraw, settings);
+    renderer.numStars = 12345;
+    renderer.shadowsEnabled = false;
+    renderer.pointLightsEnabled = false;
+    renderer.daySpeedMultiplier = 0.7;
+    for (const [W, H, stereo] of [[64, 48, true], [16, 12, false]]) {
+        const oldResources = resources.slice();
+        const oldDisplay = renderer.displayBindGroup;
+        const oldStates = renderer.starStates;
+        renderer._stereoActive = stereo;
+        renderer.frameCount = 99;
+        renderer.resize(W, H);
+        for (const [name, value] of Object.entries(retained)) assert.equal(renderer[name], value, name);
+        for (const [name, value] of Object.entries(settings)) assert.equal(renderer.starDraw[name], value, name);
+        assert.equal(renderer.numStars, 12345);
+        assert.equal(renderer.shadowsEnabled, false);
+        assert.equal(renderer.pointLightsEnabled, false);
+        assert.equal(renderer.daySpeedMultiplier, 0.7);
+        assert.equal(device.destroyCount, 0);
+        assert.equal(renderer.stars.device, device);
+        assert.equal(renderer.starDraw.device, device);
+        assert.equal(renderer.frameCount, 0);
+        assert.notEqual(renderer.starStates, oldStates);
+        assert.notEqual(renderer.starStates[0], renderer.starStates[1]);
+        for (const resource of oldResources) {
+            assert.equal(resource.destroyCount, retainedBuffers.includes(resource) ? 0 : 1);
+        }
+        assert.ok(resources.slice(oldResources.length).every(resource => resource.destroyCount === 0));
+        for (const owner of [renderer, renderer.stars, renderer.starDraw]) {
+            assert.equal(owner.W, W); assert.equal(owner.H, H);
+        }
+        assert.equal(renderer.canvas.width, stereo ? 2 * W : W);
+        assert.equal(renderer.canvas.height, H);
+        assert.deepEqual(renderer.stars.scratch.map(buffer => buffer.size), [W * H * 4, W * H * 4, H * 4]);
+        for (const name of ['colorTex', 'colorTexR', 'motionTex', 'motionTexR', 'crossTexL', 'crossTexR', 'depthTex']) {
+            assert.deepEqual(renderer[name].size, [W, H], name);
+            assert.equal(renderer[name + 'View'].texture, renderer[name], name);
+        }
+        assert.deepEqual(renderer.shadowTex.size, [renderer.shadowResolution, renderer.shadowResolution]);
+        for (const group of [renderer.sceneBindGroup, renderer.sceneBindGroupR]) {
+            assert.equal(group.entries[2].resource.texture, renderer.shadowTex);
+        }
+        assert.notEqual(renderer.displayBindGroup, oldDisplay);
+        assert.deepEqual(renderer.displayBindGroup.entries.map(entry => entry.resource), [
+            { buffer: retained.displayUniformBuf }, renderer.colorTexView, renderer.colorTexRView,
+            ...renderer.starDraw.views,
+        ]);
+        for (const view of renderer.starDraw.views) assert.deepEqual(view.texture.size, [W, H]);
+        const seeded = writes.filter(write => write.buffer === renderer.starStates[0].posL).at(-1);
+        const positions = new Float32Array(seeded.bytes.buffer);
+        positions.forEach((value, index) => assert.ok(value >= 0 && value < (index % 2 ? H : W)));
+
+        // Scene frame consumes new targets and uploads new display dimensions without new buffers.
+        const allocationCount = resources.length;
+        renderer.frame(frameOptions());
+        assert.equal(resources.length, allocationCount);
+        const display = writes.filter(write => write.buffer === renderer.displayUniformBuf).at(-1);
+        assert.deepEqual([...new Uint32Array(display.bytes.buffer)], [1, W, H, 0]);
+        assert.equal(passes.at(-2).desc.colorAttachments[0].view, renderer.colorTexView);
+
+        const opts = frameOptions();
+        const [previous, output] = renderer.starStates;
+        const computeStart = computePasses.length;
+        const renderStart = passes.length;
+        renderer.frame({ ...opts, displayMode: 6, stereo: { mode: 2, viewProjL: opts.viewProj,
+            viewProjR: opts.viewProj, prevViewProjL: opts.viewProj, prevViewProjR: opts.viewProj } });
+        assert.deepEqual(renderer.starStates, [output, previous]);
+        assert.equal(resources.length, allocationCount);
+        const compute = computePasses.slice(computeStart);
+        assert.equal(compute.length, 12);
+        assert.equal(compute[0].count, Math.ceil(W * H / 256));
+        for (const [index, view] of [[0, renderer.motionTexView], [4, renderer.motionTexRView],
+            [8, renderer.crossTexRView], [10, renderer.crossTexLView]]) {
+            assert.equal(compute[index].group.entries[1].resource, view);
+        }
+        for (const group of [...compute.map(pass => pass.group), ...passes.slice(renderStart).flatMap(pass => pass.groups)]) {
+            for (const { resource } of group.entries) {
+                if (resource.buffer || resource.texture) assert.equal((resource.buffer || resource.texture).destroyCount, 0);
+            }
+        }
+        for (const [eye, pass] of passes.slice(-3, -1).entries()) {
+            assert.equal(pass.desc.colorAttachments[0].view, renderer.starDraw.views[eye]);
+            assert.equal(pass.groups[0].entries[1].resource.buffer, output[eye ? 'mergedPosR' : 'mergedPosL']);
+        }
+    }
+    renderer.ctx.unconfigure = () => {};
+    renderer.destroy();
+    assert.equal(device.destroyCount, 1);
+    assert.ok(resources.every(resource => resource.destroyCount === 1));
+});
+
+test('resize rejects invalid dimensions and GPU limits before mutation; duplicate size is a complete no-op', t => {
+    const { renderer, device, resources, writes } = resizeFixture(t);
+    const before = { ...renderer }, allocationCount = resources.length, writeCount = writes.length;
+    for (const [W, H] of [[1, 24], [32, 1], [0, 0], [-2, 24], [32.5, 24], [32, 24.5],
+        [NaN, 24], [32, Infinity], ['32', 24], [32, null], [4097, 24], [32, 8193]]) {
+        assert.throws(() => renderer.resize(W, H), RangeError);
+    }
+    for (const [limit, value, W, H] of [
+        ['maxStorageBufferBindingSize', 64 * 48 * 4 - 1, 64, 48],
+        ['maxBufferSize', 64 * 48 * 4 - 1, 64, 48],
+        ['maxComputeWorkgroupsPerDimension', 12, 65, 48],
+    ]) {
+        const original = device.limits[limit];
+        device.limits[limit] = value;
+        assert.throws(() => renderer.resize(W, H), RangeError);
+        device.limits[limit] = original;
+    }
+    renderer.resize(32, 24);
+    assert.deepEqual({ ...renderer }, before);
+    assert.equal(resources.length, allocationCount);
+    assert.equal(writes.length, writeCount);
+    assert.ok(resources.every(resource => resource.destroyCount === 0));
+    renderer.gpuError = new Error('recorded GPU failure');
+    assert.throws(() => renderer.resize(64, 48), error => error === renderer.gpuError);
+    assert.throws(() => renderer.resize(32, 24), error => error === renderer.gpuError);
+    assert.equal(resources.length, allocationCount);
+    assert.ok(resources.every(resource => resource.destroyCount === 0));
+    delete renderer.gpuError;
+    // Exact limits are inclusive, not off-by-one rejections (64*48 / 256 = 12).
+    Object.assign(device.limits, { maxTextureDimension2D: 128, maxStorageBufferBindingSize: 64 * 48 * 4,
+        maxBufferSize: 64 * 48 * 4, maxComputeWorkgroupsPerDimension: 12 });
+    renderer.resize(64, 48);
+    assert.equal(renderer.W, 64);
+    assert.equal(renderer.H, 48);
+    const uninitialized = new WebGPURenderer({}, 32, 24, renderer.assets);
+    assert.throws(() => uninitialized.resize(64, 48), /initialized device/);
+});
 
 test('GL camera depth converts once; sky unprojects GL near/far; shadows already use ZO', () => {
     assert.match(sceneWGSL, /\(out.currClip.z \+ out.currClip.w\) \* 0.5/);

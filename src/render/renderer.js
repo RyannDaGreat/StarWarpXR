@@ -131,6 +131,55 @@ export class WebGPURenderer {
         this.frameCount = 0;
     }
 
+    /**
+     * Command. Rebuild resolution-dependent resources and reseed star histories in place.
+     * Retains the device/context (including native XR bindings), scene pipelines and buffers;
+     * recreates the fixed-resolution shadow map too. The app resets camera/instance history.
+     * @param {number} W - Integer per-eye width >= 2; SBS width must fit the device.
+     * @param {number} H - Integer per-eye height >= 2; textures/compute must fit the device.
+     * @example renderer.resize(1536, 1536) // undefined; same device, fresh 1536² eye targets
+     */
+    resize(W, H) {
+        if (this.gpuError) throw this.gpuError;
+        if (!this.device) throw new Error('resize requires an initialized device');
+        if (!Number.isInteger(W) || !Number.isInteger(H) || W < 2 || H < 2) {
+            throw new RangeError('resize requires integer W,H >= 2');
+        }
+        const { maxTextureDimension2D, maxStorageBufferBindingSize, maxBufferSize,
+            maxComputeWorkgroupsPerDimension } = this.device.limits;
+        const scratchBytes = W * H * Uint32Array.BYTES_PER_ELEMENT;
+        const pixelsPerWorkgroup = 256; // StarWarp pixel dispatch workgroup size.
+        if (2 * W > maxTextureDimension2D || H > maxTextureDimension2D) {
+            throw new RangeError('resize exceeds maxTextureDimension2D (including SBS width)');
+        }
+        if (scratchBytes > maxStorageBufferBindingSize || scratchBytes > maxBufferSize) {
+            throw new RangeError('resize exceeds maxStorageBufferBindingSize or maxBufferSize');
+        }
+        if (Math.ceil(W * H / pixelsPerWorkgroup) > maxComputeWorkgroupsPerDimension) {
+            throw new RangeError('resize exceeds maxComputeWorkgroupsPerDimension');
+        }
+        if (W === this.W && H === this.H) return;
+
+        const { starAAEnabled, starColorQEnabled, starSizeQEnabled,
+            starSizeMaxPx, cullOrphansEnabled } = this.starDraw;
+        this.stars.destroy();
+        this.starDraw.destroy();
+        for (const value of Object.values(this)) {
+            if (value instanceof GPUTexture) value.destroy();
+        }
+        this.W = W; this.H = H;
+        this.canvas.width = this._stereoActive ? W * 2 : W;
+        this.canvas.height = H;
+        this._createTextures();
+        this._createBindGroups();
+        this.stars = new StarWarp(this.device, W, H);
+        this.resetHistory();
+        this.starDraw = new StarDraw(this.device, W, H);
+        Object.assign(this.starDraw, { starAAEnabled, starColorQEnabled, starSizeQEnabled,
+            starSizeMaxPx, cullOrphansEnabled });
+        this._createDisplayBindGroup();
+    }
+
     /** Command. Release owned GPU resources, including the privately owned device. */
     destroy() {
         this.stars?.destroy(); this.starDraw?.destroy();

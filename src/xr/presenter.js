@@ -97,15 +97,15 @@ export function createPresenter(canvas) {
     /**
      * Command. Upload the rendered image and control atlas to GPU textures.
      * @param {HTMLCanvasElement} image - Left|right image (H,2W,4) RGBA, e.g. 768×1536.
-     * @param {HTMLCanvasElement} panel - Control atlas (H,W,4) RGBA, e.g. 256×1200.
+     * @param {HTMLCanvasElement|null} panel - Control atlas (H,W,4) RGBA, e.g. 256×1200; null skips upload.
      * @example presenter.upload(sceneCanvas, controlCanvas) // undefined
      */
-    upload(image, panel) { upload(image, 0); upload(panel, 1); },
+    upload(image, panel) { upload(image, 0); if (panel) upload(panel, 1); },
     /**
      * Command. Draw each eye and the spatial control panel into the XR framebuffer.
      * @param {XRWebGLLayer} layer - Runtime framebuffer and viewport provider.
      * @param {object[]} views - Eye labels, native xrView, and GL viewProj matrices (16,).
-     * @param {Float32Array} panelModel - Unit-panel world transform (16,).
+     * @param {Float32Array|null} panelModel - Unit-panel world transform (16,); null skips drawing.
      * @example presenter.present(layer, views, panelPose(head)) // undefined
      */
     present(layer, views, panelModel) {
@@ -123,11 +123,13 @@ export function createPresenter(canvas) {
         gl.uniform4f(region, view.eye === 'right' ? .5 : 0, 0, .5, 1);
         gl.drawArrays(gl.TRIANGLES, 0, 6);
         check(`${view.eye} scene draw`);
-        gl.bindTexture(gl.TEXTURE_2D, textures[1]);
-        gl.uniformMatrix4fv(transform, false, mat4.multiply(mat4.create(), view.viewProj, panelModel));
-        gl.uniform4f(region, 0, 0, 1, 1);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        check(`${view.eye} control panel draw`);
+        if (panelModel) {
+          gl.bindTexture(gl.TEXTURE_2D, textures[1]);
+          gl.uniformMatrix4fv(transform, false, mat4.multiply(mat4.create(), view.viewProj, panelModel));
+          gl.uniform4f(region, 0, 0, 1, 1);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+          check(`${view.eye} control panel draw`);
+        }
       }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     },
