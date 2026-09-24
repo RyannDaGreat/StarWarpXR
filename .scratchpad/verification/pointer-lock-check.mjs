@@ -16,7 +16,7 @@ try {
       requestSession: async () => { globalThis.xrRequests++; throw new Error('TEST: reached native XR session request'); },
     }, configurable: true });
   });
-  await page.goto('http://localhost:5173/', { waitUntil: 'networkidle0' });
+  await page.goto(process.env.APP_URL ?? 'http://localhost:5173/', { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => !document.querySelector('.vr').disabled, { timeout: 120000 });
   // Legacy browsers return undefined, which must not cause a .catch TypeError.
   await page.$eval('canvas', canvas => {
