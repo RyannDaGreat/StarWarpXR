@@ -41,12 +41,13 @@ try {
     let frames = 0, shots = [], actions = 0, ended = 0, errors = [], latestEyes;
     let firstFrame;
     const rendered = new Promise(resolve => { firstFrame = resolve; });
-    const controller = await startXR({ canvas, source, spawn: [0,0,6],
+    const options = { canvas, source, spawn: [0,0,6],
       controls: [{ label: 'Custom', run() { actions++; } }],
       render(now, views) { frames++; latestEyes = views.map(view => view.origin); firstFrame(latestEyes); },
       onshoot(...args) { shots.push(args); }, onteleport() { return [10,0,8]; },
       onend() { ended++; }, onerror(error) { errors.push(error.message); },
-    });
+    };
+    const controller = await startXR(options);
     const eyeOrigins = await rendered;
     const event = new Event('selectstart');
     event.frame = frame;
@@ -71,11 +72,27 @@ try {
     session.dispatchEvent(event);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const teleportedEyes = latestEyes;
+    reference.dispatchEvent(new Event('reset'));
     await controller.end();
     await controller.end();
-    return { frames, shots, actions, ended, errors, eyeOrigins, teleportedEyes };
+    const earlySession = new Session();
+    navigator.xr.requestSession = async () => earlySession;
+    let resumeCompatibility, compatibilityEntered, earlyEnded = 0, startupError;
+    const compatibilityStarted = new Promise(resolve => { compatibilityEntered = resolve; });
+    WebGL2RenderingContext.prototype.makeXRCompatible = () => new Promise(resolve => {
+      resumeCompatibility = resolve; compatibilityEntered();
+    });
+    const starting = startXR({ ...options, canvas: document.createElement('canvas'), onend() { earlyEnded++; } });
+    await compatibilityStarted;
+    await earlySession.end();
+    resumeCompatibility();
+    try { await starting; }
+    catch (error) { startupError = error.message; console.log('Expected startup interruption:', startupError); }
+    return { frames, shots, actions, ended, errors, eyeOrigins, teleportedEyes, earlyEnded, startupError };
   });
-  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.errors, ['Headset tracking origin changed. Re-enter VR to recalibrate safely.']);
+  assert.equal(result.earlyEnded, 1);
+  assert.equal(result.startupError, 'XR session ended during startup');
   assert.ok(result.frames >= 1);
   assert.equal(result.shots.length, 1);
   assert.equal(result.shots[0][2], true);

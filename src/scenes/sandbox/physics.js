@@ -1,7 +1,10 @@
 /**
  * Rapier physics: world, floor, dominoes, player body, sphere shooting.
  * All physics state lives here. Rendering knows nothing about Rapier.
+ * Examples use an initialized PhysicsWorld named physics unless demonstrating construction/init.
  */
+
+import * as RAPIER from '@dimforge/rapier3d-compat';
 
 const GRAVITY = { x: 0, y: -25, z: 0 };
 const DOMINO_HALF = { x: 0.75, y: 1.5, z: 0.18 };  // wide × tall × thin (3x scale)
@@ -92,19 +95,12 @@ const TOWER_RAMP_FRICTION = 0.7;
 // ---------------------------------------------------------------------------
 
 /**
- * Pure. Seeded Wang hash for integer grid coordinates → [0, 1].
- *
- * Args:
- *     a (number): Integer X index
- *     b (number): Integer Z index
- *     seed (number): Integer seed
- *
- * Returns:
- *     number: Uniform value in [0, 1]
- *
- * Examples:
- *     >>> hashCell(3, 7, 42) >= 0 && hashCell(3, 7, 42) <= 1
- *     true
+ * Pure function. Hashes integer grid coordinates to a repeatable value in [0, 1].
+ * @param {number} a - Integer X index
+ * @param {number} b - Integer Z index
+ * @param {number} seed - Integer seed
+ * @returns {number} Normalized hash
+ * @example hashCell(3, 7, 42).toFixed(6) // '0.671815'
  */
 function hashCell(a, b, seed) {
     let s = (seed ^ (a * 1619 + b * 31337)) | 0;
@@ -115,20 +111,12 @@ function hashCell(a, b, seed) {
 }
 
 /**
- * Pure. 2D bilinear value noise at (x, z) with given seed.
- * Uses smoothstep for C1-continuous interpolation.
- *
- * Args:
- *     x (number): Noise coordinate X
- *     z (number): Noise coordinate Z
- *     seed (number): Integer seed for this octave
- *
- * Returns:
- *     number: Smoothly interpolated value in [0, 1]
- *
- * Examples:
- *     >>> valueNoise2D(0.5, 1.5, 42) >= 0 && valueNoise2D(0.5, 1.5, 42) <= 1
- *     true
+ * Pure function. Interpolates seeded grid noise with smoothstep weights.
+ * @param {number} x - Noise X coordinate
+ * @param {number} z - Noise Z coordinate
+ * @param {number} seed - Integer seed
+ * @returns {number} Interpolated value in [0, 1]
+ * @example valueNoise2D(0.5, 1.5, 42).toFixed(6) // '0.530525'
  */
 function valueNoise2D(x, z, seed) {
     const ix = Math.floor(x), iz = Math.floor(z);
@@ -143,23 +131,15 @@ function valueNoise2D(x, z, seed) {
 }
 
 /**
- * Pure. Fractal Brownian Motion: layered value noise at increasing frequencies.
- * Returns a value in [0, 1] (normalized by total amplitude).
- *
- * Args:
- *     x (number): Input X
- *     z (number): Input Z
- *     seed (number): Base seed (each octave offset by i*7919)
- *     octaves (number): Number of noise octaves (default 6)
- *     lacunarity (number): Frequency multiplier per octave (default 2.0)
- *     gain (number): Amplitude multiplier per octave (default 0.5)
- *
- * Returns:
- *     number: FBM value in [0, 1]
- *
- * Examples:
- *     >>> fbm2D(1.0, 2.0, FOREST_SEED) >= 0 && fbm2D(1.0, 2.0, FOREST_SEED) <= 1
- *     true
+ * Pure function. Averages noise octaves at increasing frequencies (fractal Brownian motion).
+ * @param {number} x - Noise X coordinate
+ * @param {number} z - Noise Z coordinate
+ * @param {number} seed - Base seed; each octave adds i * 7919
+ * @param {number} [octaves=6] - Positive integer octave count
+ * @param {number} [lacunarity=2] - Frequency multiplier
+ * @param {number} [gain=0.5] - Nonnegative amplitude multiplier
+ * @returns {number} Amplitude-normalized noise in [0, 1] for these parameters
+ * @example fbm2D(1, 2, 31337).toFixed(6) // '0.477057'
  */
 function fbm2D(x, z, seed, octaves = 6, lacunarity = 2.0, gain = 0.5) {
     let value = 0, amplitude = 1.0, totalAmp = 0, freq = 1.0;
@@ -173,18 +153,11 @@ function fbm2D(x, z, seed, octaves = 6, lacunarity = 2.0, gain = 0.5) {
 }
 
 /**
- * Pure. Terrain height at world (wx, wz). Fades to zero at forest boundaries.
- *
- * Args:
- *     wx (number): World X coordinate
- *     wz (number): World Z coordinate
- *
- * Returns:
- *     number: Height >= 0 in world units
- *
- * Examples:
- *     >>> terrainHeight(FOREST_CENTER_X, FOREST_CENTER_Z) >= 0
- *     true
+ * Pure function. Computes terrain height with X-edge and south-entrance fades.
+ * @param {number} wx - World X coordinate
+ * @param {number} wz - World Z coordinate
+ * @returns {number} Nonnegative height in world units
+ * @example terrainHeight(0, 200).toFixed(3) // '21.750' at the forest center
  */
 function terrainHeight(wx, wz) {
     const lx = wx - FOREST_CENTER_X;
@@ -200,19 +173,12 @@ function terrainHeight(wx, wz) {
 }
 
 /**
- * Pure. Terrain slope at (wx, wz): max height diff across cardinal neighbors.
- *
- * Args:
- *     wx (number): World X
- *     wz (number): World Z
- *     step (number): Sample step (default: FOREST_GRID_SPACING)
- *
- * Returns:
- *     number: Max slope magnitude in height units per step
- *
- * Examples:
- *     >>> terrainSlope(FOREST_CENTER_X, FOREST_CENTER_Z) >= 0
- *     true
+ * Pure function. Takes the larger absolute height difference toward +X or +Z.
+ * @param {number} wx - World X coordinate
+ * @param {number} wz - World Z coordinate
+ * @param {number} [step=FOREST_GRID_SPACING] - Neighbor sample distance
+ * @returns {number} Height difference, not divided by step
+ * @example terrainSlope(0, 200).toFixed(3) // '0.300' over the default one-unit step
  */
 function terrainSlope(wx, wz, step = FOREST_GRID_SPACING) {
     const h  = terrainHeight(wx, wz);
@@ -222,24 +188,11 @@ function terrainSlope(wx, wz, step = FOREST_GRID_SPACING) {
 }
 
 /**
- * Pure. Terrain biome color based on height and slope.
- *
- * Biomes (in priority order):
- *   - steep (slope > 4): rock gray
- *   - high (> 25): snow white
- *   - mid (10–25): forest floor dark green
- *   - low flat: grass green
- *
- * Args:
- *     height (number): Terrain height
- *     slope (number): Terrain slope
- *
- * Returns:
- *     number[4]: [r, g, b, 1.0]
- *
- * Examples:
- *     >>> biomeColor(5, 0.5)
- *     [0.3, 0.5, 0.2, 1.0]
+ * Pure function. Selects rock (slope > 4), snow (height > 25), forest (> 10), or grass.
+ * @param {number} height - Terrain height
+ * @param {number} slope - Neighbor height difference
+ * @returns {number[]} RGBA color, shape [4]
+ * @example biomeColor(5, 0.5) // [0.3, 0.5, 0.2, 1] (low, flat grass)
  */
 function biomeColor(height, slope) {
     if (slope > 4.0) return [0.5,  0.5,  0.48, 1.0];
@@ -249,29 +202,12 @@ function biomeColor(height, slope) {
 }
 
 /**
- * Pure. Generate a maze grid using recursive backtracker (DFS).
- * Returns wall presence arrays for horizontal and vertical walls.
- *
- * The grid has `rows` x `cols` cells. Walls exist between adjacent cells.
- * - horizontal[r][c]: wall on the top edge of row r (between rows r-1 and r)
- *   Array size: (rows+1) x cols
- * - vertical[r][c]: wall on the left edge of col c (between cols c-1 and c)
- *   Array size: rows x (cols+1)
- *
- * Initially all walls are present. The DFS carves passages by removing walls
- * between the current cell and an unvisited neighbor.
- *
- * Args:
- *     rows (number): Number of cell rows
- *     cols (number): Number of cell columns
- *
- * Returns:
- *     object: { horizontal: boolean[][], vertical: boolean[][] }
- *
- * >>> const m = generateMaze(3, 3); m.horizontal.length
- * 4
- * >>> const m = generateMaze(3, 3); m.vertical[0].length
- * 4
+ * Pure function. Carves a deterministic maze using depth-first search and a local seeded RNG.
+ * @param {number} rows - Positive integer cell-row count
+ * @param {number} cols - Positive integer cell-column count
+ * @returns {{horizontal: boolean[][], vertical: boolean[][]}} Top walls [rows+1, cols]
+ * and left walls [rows, cols+1]; true means present, false means passage.
+ * @example generateMaze(2, 2).horizontal // [[true, true], [false, true], [true, true]]
  */
 function generateMaze(rows, cols) {
     // Initialize all walls as present
@@ -281,6 +217,11 @@ function generateMaze(rows, cols) {
 
     // Seeded PRNG for deterministic maze
     let seed = 42;
+    /**
+     * Command. Advances the maze-local captured seed.
+     * @returns {number} Pseudorandom value in [0, 1]
+     * @example rng().toFixed(6) // '0.582308' on the first call with seed 42
+     */
     const rng = () => {
         seed = (seed * 1103515245 + 12345) & 0x7fffffff;
         return seed / 0x7fffffff;
@@ -331,52 +272,41 @@ function generateMaze(rows, cols) {
 }
 
 /**
- * Pure. Seeded PRNG returning values in [0, 1).
- * Uses the same LCG as the maze generator.
- *
- * Args:
- *     seed (number): Initial seed value
- *
- * Returns:
- *     object: { next: () => number, range: (lo, hi) => number }
- *
- * >>> const rng = makeTowerRng(42); rng.next() >= 0 && rng.next() < 1
- * true
+ * Pure function. Creates an independent seeded generator; creation changes no external state.
+ * @param {number} seed - Initial integer seed
+ * @returns {{next: function(): number, range: function(number, number): number}} Stateful generator
+ * @example makeTowerRng(42).next().toFixed(6) // '0.582308'; fresh generators repeat this value
  */
 function makeTowerRng(seed) {
     let s = seed;
     return {
+        /**
+         * Command. Advances the generator's captured seed.
+         * @returns {number} Pseudorandom value in [0, 1]
+         * @example makeTowerRng(42).next().toFixed(6) // '0.582308'
+         */
         next() {
             s = (s * 1103515245 + 12345) & 0x7fffffff;
             return s / 0x7fffffff;
         },
-        /** Pure. Random float in [lo, hi). */
+        /**
+         * Command. Advances the captured seed and scales the next value.
+         * @param {number} lo - Lower bound
+         * @param {number} hi - Upper bound
+         * @returns {number} Value in [lo, hi] when lo <= hi
+         * @example makeTowerRng(42).range(3, 6).toFixed(6) // '4.746923'
+         */
         range(lo, hi) { return lo + this.next() * (hi - lo); },
     };
 }
 
 /**
- * Pure. Generate the tower path: a provably solvable sequence of waypoints
- * from ground level to TOWER_TARGET_HEIGHT, alternating between ramp sections
- * and jumping sections.
- *
- * Each consecutive pair of waypoints is reachable: jumping sections have
- * vertical gaps within jump height (~3 units conservative), ramp sections
- * are continuous surfaces.
- *
- * Returns an array of elements, each either:
- *   { type: 'platform', x, y, z, hw, hh, hd, color }
- *   { type: 'ramp', x, y, z, hw, hh, hd, angle, yaw, color }
- *   { type: 'flag', x, y, z }
- *
- * Args:
- *     seed (number): PRNG seed for deterministic generation
- *
- * Returns:
- *     Array<object>: tower elements
- *
- * >>> generateTowerPath(42).length > 0
- * true
+ * Pure function. Generates seeded platforms, ramps, decoy branches and a final flag.
+ * Only a fresh local generator is advanced; no global RNG is used.
+ * @param {number} seed - Integer seed for repeatable generation
+ * @returns {object[]} Elements with type and x/y/z; platforms add hw/hh/hd/color,
+ * ramps also add angle/yaw. Reachability is not guaranteed here.
+ * @example generateTowerPath(42).length // 42 elements, including decoys and the flag
  */
 function generateTowerPath(seed) {
     const rng = makeTowerRng(seed);
@@ -513,9 +443,12 @@ function generateTowerPath(seed) {
     return elements;
 }
 
-let RAPIER = null;
 
 export class PhysicsWorld {
+    /**
+     * Command. Initializes this instance's body references and scene collections.
+     * @example new PhysicsWorld().dominoes // [] (call init before simulating)
+     */
     constructor() {
         this.world = null;
         this.floor = null;
@@ -553,11 +486,11 @@ export class PhysicsWorld {
     }
 
     /**
-     * Load Rapier WASM and create the physics world.
-     * Not pure: loads WASM, creates global physics state.
+     * Command. Loads Rapier WASM and populates this instance's world and scene bodies.
+     * @returns {Promise<void>} Resolves once construction finishes
+     * @example await physics.init() // undefined; physics.dominoes.length is 60
      */
     async init() {
-        RAPIER = await import('@dimforge/rapier3d-compat');
         await RAPIER.init();
 
         this.world = new RAPIER.World(GRAVITY);
@@ -572,6 +505,10 @@ export class PhysicsWorld {
         this._createPlayer();
     }
 
+    /**
+     * Command. Creates a fixed floor body and collider in this.world.
+     * @example physics._createFloor() // undefined; physics.floor references the new body
+     */
     _createFloor() {
         const rbDesc = RAPIER.RigidBodyDesc.fixed()
             .setTranslation(0, -FLOOR_HALF.y, 0);
@@ -583,9 +520,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create white picket fence around the floor perimeter.
-     * 4 invisible wall colliders for physics + render-only posts and rails.
-     * Not pure: creates physics bodies and populates this.fence/this.fenceWalls.
+     * Command. Adds four invisible perimeter walls and render-only fence posts/rails.
+     * @example physics._createFence() // undefined; appends four bodies to physics.fenceWalls
      */
     _createFence() {
         const HALF = FLOOR_HALF.x;  // 200 — floor is square
@@ -613,10 +549,26 @@ export class PhysicsWorld {
         }
 
         // Visual fence: posts every POST_SPACING along each edge + connecting rails
+        /**
+         * Command. Appends a render-only post to this.fence.
+         * @param {number} x - World X
+         * @param {number} z - World Z
+         * @example addPost(0, -200) // undefined; appends a post centered at (0, 0.75, -200)
+         */
         const addPost = (x, z) => {
             this.fence.push({ pos: { x, y: FENCE_H, z }, rot: IDENT_ROT, half: POST_HALF, color: COLOR });
         };
 
+        /**
+         * Command. Appends a render-only rail to this.fence.
+         * @param {number} cx - Center X
+         * @param {number} cy - Center Y
+         * @param {number} cz - Center Z
+         * @param {number} hx - Half-width X
+         * @param {number} hy - Half-height Y
+         * @param {number} hz - Half-depth Z
+         * @example addRail(2, 0.35, -200, 2, 0.04, 0.04) // undefined; appends a bottom rail
+         */
         const addRail = (cx, cy, cz, hx, hy, hz) => {
             this.fence.push({ pos: { x: cx, y: cy, z: cz }, rot: IDENT_ROT, half: [hx, hy, hz], color: COLOR });
         };
@@ -667,6 +619,11 @@ export class PhysicsWorld {
         // (the loop skips the last section since z + POST_SPACING might overshoot)
     }
 
+    /**
+     * Command. Creates dynamic domino bodies/colliders and appends them to this.dominoes.
+     * @param {number} count - Number of dominoes
+     * @example physics._createDominoes(60) // undefined; appends 60 dominoes along -Z
+     */
     _createDominoes(count) {
         for (let i = 0; i < count; i++) {
             const z = -i * DOMINO_SPACING;
@@ -683,10 +640,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Generate and place the stone garden maze at MAZE_CENTER_X, MAZE_CENTER_Z.
-     * Uses recursive backtracker (DFS) for maze generation, then creates fixed
-     * cuboid colliders for each wall segment. Entrance faces +X (toward main area).
-     * Not pure: creates rigid bodies in the physics world.
+     * Command. Creates fixed maze walls/chest and populates ivy; entrance faces +X.
+     * @example physics._createMaze() // undefined; physics.mazeChest holds the new chest body
      */
     _createMaze() {
         const grid = generateMaze(MAZE_ROWS, MAZE_COLS);
@@ -747,13 +702,13 @@ export class PhysicsWorld {
     }
 
     /**
-     * Populate this.mazeIvy with render-only leaf and tendril boxes on maze wall tops.
-     * Roughly 30% of wall top segments get ivy. Uses a seeded LCG for determinism.
-     * Not pure: mutates this.mazeIvy.
+     * Command. Appends seeded render-only leaves and tendrils to this.mazeIvy.
+     * Roughly 30% of wall top segments get ivy.
      *
      * @param {object} grid - { horizontal, vertical } boolean arrays from generateMaze
      * @param {number} originX - World X of the maze grid top-left corner
      * @param {number} originZ - World Z of the maze grid top-left corner
+     * @example physics._populateMazeIvy(generateMaze(15, 15), -130, -30) // undefined; appends ivy
      */
     _populateMazeIvy(grid, originX, originZ) {
         const identityRot = { x: 0, y: 0, z: 0, w: 1 };
@@ -763,14 +718,22 @@ export class PhysicsWorld {
         const IVY_PROB    = 0.30;  // ~30% of wall segments get ivy
 
         // Simple seeded LCG so ivy layout is deterministic each run.
-        // Returns next pseudo-random float in [0, 1).
         let seed = 0xdeadbeef;
+        /**
+         * Command. Advances the ivy-local captured seed.
+         * @returns {number} Pseudorandom value in [0, 1]
+         * @example rng().toFixed(6) // '0.416685' on the first call with seed 0xdeadbeef
+         */
         const rng = () => {
             seed = (seed * 1664525 + 1013904223) >>> 0;
             return (seed >>> 0) / 0xffffffff;
         };
 
-        // Leaf cluster color: random green variation per instance.
+        /**
+         * Command. Advances the ivy RNG three times to choose a green leaf color.
+         * @returns {number[]} RGBA color, shape [4]
+         * @example leafColor().length // 4; green varies from 0.40 to 0.60, alpha is 1
+         */
         const leafColor = () => {
             const g = rng() * 0.20 + 0.40;  // 0.40 – 0.60
             const r = rng() * 0.10 + 0.10;  // 0.10 – 0.20
@@ -778,7 +741,11 @@ export class PhysicsWorld {
             return [r, g, b, 1.0];
         };
 
-        // Vine stem color: dark green, fixed.
+        /**
+         * Pure function. Returns the fixed dark-green vine color.
+         * @returns {number[]} RGBA color, shape [4]
+         * @example stemColor() // [0.08, 0.22, 0.05, 1]
+         */
         const stemColor = () => [0.08, 0.22, 0.05, 1.0];
 
         // Horizontal walls: run along X at z = originZ + r * MAZE_CELL_SIZE
@@ -851,8 +818,7 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create a single fixed maze wall collider at (cx, cy, cz) with half-extents.
-     * Not pure: creates a rigid body in the physics world, pushes to this.mazeWalls.
+     * Command. Creates a fixed wall body/collider and appends it to this.mazeWalls.
      *
      * @param {number} cx - Center X position
      * @param {number} cy - Center Y position
@@ -860,6 +826,7 @@ export class PhysicsWorld {
      * @param {number} hx - Half-extent X
      * @param {number} hy - Half-extent Y
      * @param {number} hz - Half-extent Z
+     * @example physics._createMazeWall(-128, 1.5, -30, 2, 1.5, 0.25) // undefined; appends one wall
      */
     _createMazeWall(cx, cy, cz, hx, hy, hz) {
         const rbDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy, cz);
@@ -872,7 +839,7 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create the marble machine ("The Contraption") at (MM_CX, MM_CZ).
+     * Command. Creates marble-machine bodies/joints and replaces its scene collections.
      *
      * Flow (top-down, Z increases northward):
      *
@@ -884,7 +851,7 @@ export class PhysicsWorld {
      * Chains hang from platform east edges — anchored at platform top, hanging freely below.
      * Wheels sit at ramp midpoints, axis=X so rolling balls spin them.
      *
-     * Not pure: creates rigid bodies and joints in the physics world.
+     * @example physics._createMarbleMachine() // undefined; physics.mmWheels.length is 3
      */
     _createMarbleMachine() {
         this.mmStructure = [];
@@ -973,7 +940,20 @@ export class PhysicsWorld {
         // Wheel axis = X (ax=1, az=0): ball rolling in -Z direction spins it.
         // Positioned at ramp center X, mid-height of the ramp's Y span, ramp mid-Z.
         // ------------------------------------------------------------------
+        /**
+         * Pure function. Finds the Z midpoint of a southward ramp of fixed RAMP_LEN.
+         * @param {number} startZ - Ramp start Z
+         * @returns {number} Midpoint Z
+         * @example rampMidZ(42) // 34.5 for the enclosing 15-unit ramp length
+         */
         const rampMidZ = (startZ) => startZ - RAMP_LEN / 2;  // dz=-1: midpoint is startZ - half
+        /**
+         * Pure function. Averages the ramp endpoint heights.
+         * @param {number} yHigh - Upper endpoint height
+         * @param {number} yLow - Lower endpoint height
+         * @returns {number} Midpoint height
+         * @example rampMidY(9, 6) // 7.5
+         */
         const rampMidY = (yHigh, yLow) => (yHigh + yLow) / 2;
 
         this._mmWheel(RAMP_X, rampMidY(P3.y, P2.y), rampMidZ(P3.z - MM_PLATFORM_HZ), 1, 0, 0, WC[0]);
@@ -990,6 +970,12 @@ export class PhysicsWorld {
         //   P2 chains (anchor Y ≈ 6.15): bottom ≈ 2.85  — above P1 surface (3.15) ✓
         //   P1 chains (5 links, anchor Y ≈ 3.15): bottom ≈ 0.4 — clears ground ✓
         // ------------------------------------------------------------------
+        /**
+         * Pure function. Computes the platform's top surface for a chain anchor.
+         * @param {{y: number}} p - Platform center
+         * @returns {number} Top-surface Y
+         * @example anchorY({y: 9}) // 9.15
+         */
         const anchorY   = (p) => p.y + MM_PLATFORM_HY;
         const EAST_EDGE = MM_CX + MM_PLATFORM_HX;  // X=110
 
@@ -1007,7 +993,18 @@ export class PhysicsWorld {
         this._mmChain(EAST_EDGE, anchorY(P1), P1.z + 3, 5, I);
     }
 
-    /** Not pure: creates a fixed box body, pushes to this.mmStructure. */
+    /**
+     * Command. Creates a fixed box body/collider and appends it to this.mmStructure.
+     * @param {number} cx - Center X
+     * @param {number} cy - Center Y
+     * @param {number} cz - Center Z
+     * @param {number} hx - Half-width X
+     * @param {number} hy - Half-height Y
+     * @param {number} hz - Half-depth Z
+     * @param {number[]} color - RGBA color, shape [4]
+     * @param {number} [friction=0.5] - Collider friction
+     * @example physics._mmBox(100, 3, 0, 10, 0.15, 8, [0.6, 0.4, 0.2, 1]) // undefined; adds a platform
+     */
     _mmBox(cx, cy, cz, hx, hy, hz, color, friction = 0.5) {
         const rb = this.world.createRigidBody(
             RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy, cz)
@@ -1018,7 +1015,19 @@ export class PhysicsWorld {
         this.mmStructure.push({ body: rb, half: [hx, hy, hz], color });
     }
 
-    /** Not pure: creates staircase steps + railings via _mmBox. */
+    /**
+     * Command. Adds step and railing bodies to this.world and this.mmStructure.
+     * @param {number} sx - Start X
+     * @param {number} sz - Start Z
+     * @param {number} yFrom - Starting height
+     * @param {number} yTo - Ending height
+     * @param {number} dx - Travel direction X
+     * @param {number} dz - Travel direction Z
+     * @param {number[]} stepColor - Step RGBA, shape [4]
+     * @param {number[]} railColor - Railing RGBA, shape [4]
+     * @example // C and M are the wood/metal RGBA palettes in _createMarbleMachine.
+     * physics._mmStairs(93, -21.5, 0, 3, 0, 1, C, M) // undefined; adds 10 steps and 20 rails
+     */
     _mmStairs(sx, sz, yFrom, yTo, dx, dz, stepColor, railColor) {
         const rise = MM_STEP_HH * 2;
         const run = MM_STEP_HD * 2;
@@ -1038,7 +1047,20 @@ export class PhysicsWorld {
         }
     }
 
-    /** Not pure: creates ramp segments + gutter walls via _mmBox. */
+    /**
+     * Command. Adds eight ramp segments and their gutters to this.world and this.mmStructure.
+     * @param {number} sx - Start X
+     * @param {number} sz - Start Z
+     * @param {number} yFrom - Starting height
+     * @param {number} yTo - Ending height
+     * @param {number} len - Horizontal run length
+     * @param {number} dx - Axis-aligned travel direction X
+     * @param {number} dz - Axis-aligned travel direction Z
+     * @param {number[]} rampColor - Ramp RGBA, shape [4]
+     * @param {number[]} gutterColor - Gutter RGBA, shape [4]
+     * @example // S and M are the stone/metal RGBA palettes in _createMarbleMachine.
+     * physics._mmRamp(107, 42, 9, 6, 15, 0, -1, S, M) // undefined; adds 24 boxes
+     */
     _mmRamp(sx, sz, yFrom, yTo, len, dx, dz, rampColor, gutterColor) {
         const segs = 8;
         const segLen = len / segs;
@@ -1060,7 +1082,17 @@ export class PhysicsWorld {
         }
     }
 
-    /** Not pure: creates a spinning wheel + revolute joint. */
+    /**
+     * Command. Creates an anchor, wheel collider and revolute joint; appends to this.mmWheels.
+     * @param {number} x - Center X
+     * @param {number} y - Center Y
+     * @param {number} z - Center Z
+     * @param {number} ax - Joint axis X
+     * @param {number} ay - Joint axis Y
+     * @param {number} az - Joint axis Z
+     * @param {number[]} color - RGBA color, shape [4]
+     * @example physics._mmWheel(107, 7.5, 34.5, 1, 0, 0, [0.85, 0.15, 0.15, 1]) // undefined; adds one wheel
+     */
     _mmWheel(x, y, z, ax, ay, az, color) {
         const anchor = this.world.createRigidBody(
             RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z)
@@ -1084,7 +1116,15 @@ export class PhysicsWorld {
         this.mmWheels.push({ body: wheel, half: [hx, hy, hz], color });
     }
 
-    /** Not pure: creates a dangling chain of spherical-jointed boxes. */
+    /**
+     * Command. Creates an anchor and jointed links; appends links to this.mmChains.
+     * @param {number} x - Anchor X
+     * @param {number} y - Anchor Y
+     * @param {number} z - Anchor Z
+     * @param {number} n - Link count
+     * @param {number[]} color - RGBA color, shape [4]
+     * @example physics._mmChain(110, 9.15, 46, 6, [0.25, 0.25, 0.3, 1]) // undefined; appends six links
+     */
     _mmChain(x, y, z, n, color) {
         const segH = MM_CHAIN_SEG.y * 2;
         const gap = 0.05;
@@ -1120,10 +1160,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Build the platforming tower in the far south of the world.
-     * Generates a provably solvable path using generateTowerPath(),
-     * then creates fixed cuboid colliders for each platform, ramp, and flag piece.
-     * Not pure: creates rigid bodies in the physics world.
+     * Command. Creates seeded tower bodies/colliders and appends platforms, ramps and flag pieces.
+     * @example physics._createPlatformTower() // undefined; appends two bodies to physics.towerFlag
      */
     _createPlatformTower() {
         const elements = generateTowerPath(7777);
@@ -1210,12 +1248,9 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create the forest and mountain biome in the far north (The Wilds).
-     * Places terrain columns on a grid with height from FBM noise, trees on flat ground,
-     * shrubs on low grass, and mushrooms sparsely in clearings.
-     *
-     * Not pure: creates many fixed rigid bodies in the physics world, populates
-     * this.terrainBlocks, this.trees, this.shrubs, this.mushrooms.
+     * Command. Creates fixed terrain/vegetation bodies and replaces their scene collections.
+     * Uses seeded noise and local generators for repeatable placement.
+     * @example physics._createForest() // undefined; physics.terrainBlocks contains terrain columns
      */
     _createForest() {
         this.terrainBlocks = [];  // { body, half: [hx,hy,hz], color: [r,g,b,a] }
@@ -1309,13 +1344,13 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create a single tree (trunk + canopy) at world (wx, -, wz) on terrain height h.
-     * Not pure: creates rigid bodies, pushes to this.trees.
+     * Command. Creates trunk/canopy bodies and colliders; appends two entries to this.trees.
      *
      * @param {number} wx - World X
      * @param {number} wz - World Z
      * @param {number} h  - Terrain height at this position
      * @param {number} scale - Scale factor (0.7–1.3)
+     * @example physics._createTree(0, 200, 10, 1) // undefined; adds a trunk and canopy above height 10
      */
     _createTree(wx, wz, h, scale) {
         // Trunk
@@ -1342,12 +1377,12 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create a mushroom (stem + cap) at world (wx, -, wz).
-     * Not pure: creates rigid bodies, pushes to this.mushrooms.
+     * Command. Creates stem/cap bodies and colliders; appends two entries to this.mushrooms.
      *
      * @param {number} wx - World X
      * @param {number} wz - World Z
      * @param {number} h  - Terrain height at this position
+     * @example physics._createMushroom(0, 170, 2) // undefined; adds a stem and cap above height 2
      */
     _createMushroom(wx, wz, h) {
         // Stem
@@ -1374,12 +1409,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Create billboard signposts at every area entrance.
-     * Each sign: a tall wood pole + a large colored board on top.
-     * Signs are color-coded per area for identification (no text rendering).
-     * Not pure: creates fixed rigid bodies, populates this.signposts.
-     *
-     * >>> // Populates this.signposts with pole+board pairs for all 5 areas
+     * Command. Creates five color-coded pole/board pairs and appends them to this.signposts.
+     * @example physics._createSignposts() // undefined; appends ten signpost entries
      */
     _createSignposts() {
         // [ wx, wz, colorKey ] — position each sign near its area entrance
@@ -1396,14 +1427,13 @@ export class PhysicsWorld {
     }
 
     /**
-     * Place a single billboard signpost (pole + sign board) at world (wx, wz).
-     * Not pure: creates fixed rigid bodies, pushes 2 entries to this.signposts.
+     * Command. Creates pole/board bodies and colliders; appends two entries to this.signposts.
      *
      * @param {number} wx - World X
      * @param {number} wz - World Z
      * @param {number[]} boardColor - RGBA color for the sign board
      *
-     * >>> // Pushes { body, half, color } for pole then board into this.signposts
+     * @example physics._placeSignpost(0, -5, [0.92, 0.9, 0.85, 1]) // undefined; adds an ivory sign
      */
     _placeSignpost(wx, wz, boardColor) {
         // Pole — center at half-height so the base sits on y=0
@@ -1429,6 +1459,10 @@ export class PhysicsWorld {
         this.signposts.push({ body: boardRb, half: boardHalf, color: boardColor });
     }
 
+    /**
+     * Command. Creates the player capsule and stores its body/collider references.
+     * @example physics._createPlayer() // undefined; player spawns at approximately (0, 0.9, 6)
+     */
     _createPlayer() {
         const rbDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(0, PLAYER_HALF_HEIGHT + PLAYER_RADIUS + 0.1, 6)
@@ -1442,10 +1476,9 @@ export class PhysicsWorld {
     }
 
     /**
-     * Get player eye position (body center + eye offset).
-     * Pure.
-     *
-     * >>> // Returns {x, y, z}
+     * Query. Reads the player body position and adds the eye-height offset.
+     * @returns {{x: number, y: number, z: number}} World-space eye position
+     * @example physics.getPlayerEyePos() // approximately {x: 0, y: 1.6, z: 6} just after init
      */
     getPlayerEyePos() {
         const t = this.playerBody.translation();
@@ -1453,14 +1486,14 @@ export class PhysicsWorld {
     }
 
     /**
-     * Apply movement to player body based on input direction.
-     * Not pure: mutates player body velocity.
+     * Command. Sets horizontal player velocity from input, preserving vertical velocity.
      *
      * @param {number} forwardX - forward direction X component
      * @param {number} forwardZ - forward direction Z component
      * @param {number} rightX - right direction X component
      * @param {number} rightZ - right direction Z component
      * @param {object} keys - pressed key map
+     * @example physics.movePlayer(0, -1, 1, 0, {KeyW: true}) // undefined; sets Z velocity to -5
      */
     movePlayer(forwardX, forwardZ, rightX, rightZ, keys) {
         const vel = this.playerBody.linvel();
@@ -1495,8 +1528,13 @@ export class PhysicsWorld {
     }
 
     /**
-     * Spawn a projectile sphere at pos flying in dir.
-     * Not pure: creates rigid body in world, may destroy oldest sphere.
+     * Command. Creates a sphere body/collider and appends it; removes the oldest at capacity.
+     * @param {{x: number, y: number, z: number}} pos - World-space origin
+     * @param {number} dirX - Launch direction X (unit vector expected)
+     * @param {number} dirY - Launch direction Y
+     * @param {number} dirZ - Launch direction Z
+     * @param {number} [offset=1.5] - Spawn displacement along direction
+     * @example physics.shoot({x: 10, y: 2, z: 6}, 0, 0, -1) // undefined; spawns at (10, 2, 4.5)
      */
     shoot(pos, dirX, dirY, dirZ, offset = 1.5) {
         // Recycle oldest if at max
@@ -1522,8 +1560,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Step the physics simulation.
-     * Not pure: advances world state.
+     * Command. Sets the timestep and advances the Rapier world.
+     * @example physics.step() // undefined; advances 1/60 second, or 1/240 in slow motion
      */
     step() {
         const dt = this.slowMo ? 1/240 : 1/60;
@@ -1532,8 +1570,8 @@ export class PhysicsWorld {
     }
 
     /**
-     * Reset scene: remove all dynamic bodies and recreate them.
-     * Not pure: destroys and recreates rigid bodies and joints.
+     * Command. Removes spheres, rebuilds dominoes/marble machine, and resets player position/velocity.
+     * @example physics.reset() // undefined; physics.spheres.length is 0, physics.dominoes.length is 60
      */
     reset() {
         // Remove spheres
@@ -1563,11 +1601,10 @@ export class PhysicsWorld {
     }
 
     /**
-     * Get all renderable bodies as arrays of {position, rotation, halfExtents/radius, type}.
-     * Pure (reads physics state but doesn't mutate).
-     *
-     * Returns:
-     *     object: { floor, dominoes, spheres } each with position/rotation data
+     * Query. Reads body transforms and scene collections for rendering; no physics mutation.
+     * @returns {object} Floor/chest records, body arrays with pos/rot, dimensions/colors,
+     * and render-only ivy/fence arrays. Some arrays and metadata are shared, not copied.
+     * @example physics.getSceneData().dominoes.length // 60 just after init
      */
     getSceneData() {
         const floorPos = this.floor.translation();
@@ -1595,6 +1632,12 @@ export class PhysicsWorld {
             half: CHEST_HALF,
         } : null;
 
+        /**
+         * Query. Reads a body's transform and retains its render metadata references.
+         * @param {object} item - Body record with body, half [3] (XYZ), color [4] (RGBA)
+         * @returns {object} {pos, rot, half, color}; rot is an XYZW quaternion
+         * @example extractBody(this.mmWheels[0]).half // [0.15, 1.2, 1.2] just after init
+         */
         const extractBody = (item) => ({
             pos: item.body.translation(),
             rot: item.body.rotation(),

@@ -38,7 +38,7 @@
   <canvas bind:this={xrCanvas} class="xr-surface" aria-hidden="true"></canvas>
   <header>
     <div><strong>NOISE WARP <span>VR</span></strong><small>Scene / Stars · WebXR</small></div>
-    <button class="vr" disabled={!ready || !supported || immersive} onclick={() => app.enterVR()}>
+    <button class="vr" disabled={!ready || !supported || immersive} onclick={() => { error = ''; app.enterVR(); }}>
       {immersive ? 'In headset' : supported ? 'Enter VR' : 'VR headset required'}
     </button>
   </header>

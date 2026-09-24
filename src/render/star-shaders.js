@@ -1,4 +1,4 @@
-/** Retained upstream tent/disc rasterization; legacy atlas vertex fields stay inactive (emoji=0). */
+/** Retained upstream tent/disc coordinate rasterization, without sprite-atlas branches. */
 export const starRenderWGSL = /* wgsl */`
 struct StarRenderUniforms {
     W:         u32,
@@ -7,8 +7,8 @@ struct StarRenderUniforms {
     aa:        u32,
     radius:    f32,   // tent radius in texels (integer-valued for exactness)
     hardHalf:  f32,   // half-extent of the hard (non-AA) quad in texels
-    emoji:     u32,   // 1: render id-hashed emoji sprites instead of tents
-    glyphHalf: f32,   // half-extent of an emoji sprite in texels
+    _padding0: u32,
+    _padding1: f32,
     colorQ:    u32,   // 1: tint tents by turbo(q) — blue fresh, red near death
     sizeQ:     u32,   // 1: scale every star's footprint by its strength q
     sizeMaxPx: f32,   // q-size mode: full width in texels of a fresh (q~0) star
@@ -25,7 +25,8 @@ struct StarMeta {
     id: u32,
 }
 
-// Google's Turbo colormap, polynomial approximation (Mikhailov 2019).
+// Pure function. Google's Turbo approximation (Mikhailov 2019), t -> RGB.
+// Example: turboQ(0.0) -> approximately (0.136, 0.091, 0.107).
 fn turboQ(t: f32) -> vec3f {
     let x = clamp(t, 0.0, 1.0);
     let v4 = vec4f(1.0, x, x * x, x * x * x);
@@ -44,17 +45,14 @@ fn turboQ(t: f32) -> vec3f {
 // written by mergeSelect; mono renders bind it too but never read (eyeBit 0).
 @group(0) @binding(5) var<storage, read> eyeMask: array<u32>;
 
-const ATLAS_GRID = 8u;      // 8x8 glyph cells in the atlas
-const ATLAS_GLYPHS = 61u;   // populated cells (rest are empty)
-
 struct VsOut {
     @builtin(position) position: vec4f,
     @location(0) @interpolate(flat) starPos: vec2f,
-    @location(1) uv: vec2f,
     @location(2) @interpolate(flat) qv: f32,        // strength, for turbo tint
     @location(3) @interpolate(flat) effRadius: f32, // per-star tent radius (q-size)
 }
 
+// Query. Read coordinate/meta/mask buffers and construct a rasterization vertex.
 @vertex fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
     let star = vid / 6u;
     let corner = vid % 6u;
@@ -69,7 +67,6 @@ struct VsOut {
     if (skip) {
         out.position = vec4f(2.0, 2.0, 0.0, 1.0);  // degenerate, off-screen
         out.starPos = vec2f(0.0);
-        out.uv = vec2f(0.0);
         out.qv = 0.0;
         out.effRadius = 1.0;
         return out;
@@ -79,7 +76,6 @@ struct VsOut {
 
     // Cover the full tent support (+0.5 reaches every participating texel center).
     // Q-size mode draws shrinking discs: sizeMaxPx * max(1-q, SIZE_Q_MIN).
-    // Legacy atlas branches are inactive: the rasterizer always writes emoji=0.
     var half: f32;
     var rad = u.radius;
     if (u.sizeQ == 1u) {
@@ -87,10 +83,9 @@ struct VsOut {
         // full width and SHRINK as crowding erodes q toward death at 1.
         rad = max(0.5 * u.sizeMaxPx * max(1.0 - q, SIZE_Q_MIN), 0.25);
         half = rad;
-        if (u.emoji != 1u) { half += 1.0; }          // room for the AA rim
+        half += 1.0; // Room for the AA rim.
     } else {
         half = select(u.hardHalf, u.radius + 0.5, u.aa == 1u);
-        if (u.emoji == 1u) { half = u.glyphHalf; }
     }
     out.qv = q;
     out.effRadius = rad;
@@ -101,12 +96,6 @@ struct VsOut {
     );
     let corner_px = pos + offsets[corner] * half;
 
-    // Same identity -> same glyph, always: Knuth multiplicative hash -> atlas cell.
-    // Atlas rows and quad pixel rows both run top-down, so uv aligns directly.
-    let g = (starMeta[star].id * 2654435761u) % ATLAS_GLYPHS;
-    let cell = vec2f(f32(g % ATLAS_GRID), f32(g / ATLAS_GRID));
-    out.uv = (cell + offsets[corner] * 0.5 + vec2f(0.5)) / f32(ATLAS_GRID);
-
     // Pixel coords -> NDC (row 0 is the top => NDC y = +1).
     let ndc = vec2f(corner_px.x / f32(u.W) * 2.0 - 1.0,
                     1.0 - corner_px.y / f32(u.H) * 2.0);
@@ -115,6 +104,7 @@ struct VsOut {
     return out;
 }
 
+// Query. Read draw settings and evaluate the retained tent/disc coverage kernel.
 @fragment fn fs(in: VsOut) -> @location(0) vec4f {
 
     var w: f32 = 1.0;
@@ -129,8 +119,7 @@ struct VsOut {
         let d = abs(in.position.xy - in.starPos);
         w = max(0.0, 1.0 - d.x / in.effRadius) * max(0.0, 1.0 - d.y / in.effRadius);
     }
-    // Alpha carries coverage so the display can composite stars OVER the
-    // optional field background (additive blend accumulates it like rgb).
+    // Alpha carries coverage; RGB and coverage accumulate additively.
     let tint = select(vec3f(1.0), turboQ(in.qv), u.colorQ == 1u);
     return vec4f(tint * w, w);
 }
