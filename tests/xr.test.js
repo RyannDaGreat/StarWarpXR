@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { mat4 } from 'gl-matrix';
 import { worldPose, poseRay, aimFromHand, panelHit, panelPose } from '../src/xr/math.js';
 import { sceneLights } from '../src/scenes/sandbox/index.js';
+import { toGLProjection } from '../src/xr/projection.js';
+
+/** Command. Verify native XR WebGPU depth maps to the renderer's GL convention without mutation. */
+test('WebGPU XR projection converts near/far to GL clip depth exactly once', () => {
+  const near = .1, far = 10000;
+  const gpu = mat4.perspectiveZO(mat4.create(), Math.PI / 2, 1, near, far);
+  const original = Array.from(gpu);
+  const gl = toGLProjection(gpu);
+  const reference = mat4.perspectiveNO(mat4.create(), Math.PI / 2, 1, near, far);
+  for (let i = 0; i < 16; i++) assert.ok(Math.abs(gl[i] - reference[i]) < 1e-6);
+  assert.deepEqual(Array.from(gpu), original);
+  for (const [z, expected] of [[-near, -1], [-far, 1]]) {
+    const depth = (gl[10] * z + gl[14]) / (gl[11] * z + gl[15]);
+    assert.ok(Math.abs(depth - expected) < 1e-6);
+  }
+  assert.equal(toGLProjection(mat4.create())[14], -1);
+});
 
 /** Command. Check coordinate invariants and representative hand/panel interaction examples. */
 test('XR coordinates: floor translation, aim, rigid head panel and rejection', () => {

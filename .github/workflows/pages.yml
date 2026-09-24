@@ -27,6 +27,8 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
       - run: npm test
       - run: npm run build
+        env:
+          VITE_BUILD_ID: ${{ github.sha }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

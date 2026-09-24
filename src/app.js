@@ -59,7 +59,8 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
    * @param {number} now - Frame timestamp in milliseconds.
    * @param {object[]} views - GL matrices (16,), world xyz origins and directions per eye.
    * @param {object} head - World {origin:[x,y,z],direction:[dx,dy,dz]} for lighting.
-   * @example render(now, xrViews, headRay) // undefined; stereo frame submitted
+   * @returns {GPUTexture} Borrowed, sampleable SBS canvas texture for native XR presentation.
+   * @example render(now, xrViews, headRay) // GPUTexture; stereo frame submitted
    */
   function render(now, views, head) {
     const dt = lastTime === null ? 0 : (now - lastTime) / 1000;
@@ -83,6 +84,7 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
       lights: sceneData.lights,
     });
     for (const view of views) previous.set(view.eye, mat4.clone(view.viewProj));
+    return renderer.ctx.getCurrentTexture();
   }
 
   /**
@@ -114,7 +116,8 @@ export async function createApp({ canvas, xrCanvas, onerror, onstatus }) {
       // Pointer lock is desktop-only and absent on visionOS Safari.
       document.exitPointerLock?.();
       scene.setXR(true); resetHistory(); onstatus({ immersive: true });
-      xr = await startXR({ canvas: xrCanvas, source: canvas, spawn: scene.spawn, render,
+      xr = await startXR({ canvas: xrCanvas, source: canvas, device: renderer.device, spawn: scene.spawn, render,
+        onbackend: backend => onstatus({ backend }),
         onshoot: scene.shoot,
         onteleport(origin, direction) {
           const destination = scene.teleportTarget(origin, direction);

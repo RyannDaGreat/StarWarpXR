@@ -76,7 +76,7 @@ export class WebGPURenderer {
      * @example await renderer.init() // undefined; ready for frame()
      */
     async init() {
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance', xrCompatible: typeof XRGPUBinding === 'function' });
         if (!adapter) throw new Error('WebGPU: no adapter found');
 
         this.device = await adapter.requestDevice({
@@ -101,7 +101,8 @@ export class WebGPURenderer {
 
         this.ctx = this.canvas.getContext('webgpu');
         this.canvasFormat = navigator.gpu.getPreferredCanvasFormat();
-        this.ctx.configure({ device: this.device, format: this.canvasFormat, alphaMode: 'opaque' });
+        this.ctx.configure({ device: this.device, format: this.canvasFormat, alphaMode: 'opaque',
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
 
         this._createTextures();
         this._createBuffers();

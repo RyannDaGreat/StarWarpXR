@@ -7,7 +7,7 @@
   --gap: 12px; --small-gap: 6px; --pad: 16px; --large-pad: 24px;
   --radius: 10px; --line: 1px; --panel-width: 272px; --shadow-size: 20px;
   --font: 14px; --small-font: 12px; --brand: 17px; --tracking: 1px;
-  --mobile-breakpoint: 600px; --tap-height: 42px;
+  --mobile-breakpoint: 600px; --tap-height: 42px; --dialog-max-height: 85dvh;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font-size: var(--font); }
@@ -40,7 +40,8 @@ p { line-height: 1.6; }
 footer { bottom: var(--gap); left: var(--pad); font-size: var(--small-font); color: var(--muted); background: var(--panel); padding: var(--small-gap) var(--gap); border-radius: var(--radius); }
 a { color: var(--accent); }
 .notice, .error { top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--panel); padding: var(--large-pad); border-radius: var(--radius); max-width: 85%; }
-.error { background: var(--error); z-index: 2; }
+.error { background: var(--error); z-index: 2; max-height: var(--dialog-max-height); overflow: auto; }
+.error pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font-size: var(--small-font); }
 @media (max-width: 600px) {
   aside { top: auto; bottom: var(--pad); left: var(--pad); right: var(--pad); width: auto; transform: none; max-height: 35%; }
   footer { display: none; }

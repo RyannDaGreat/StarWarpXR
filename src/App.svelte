@@ -7,14 +7,31 @@
   let app = $state(null), error = $state(''), ready = $state(false);
   let mode = $state(1), immersive = $state(false), supported = $state(false);
   let stars = $state(10000), antialias = $state(true), cull = $state(false);
+  let backend = $state('Not entered'), diagnostics = $state(''), copyStatus = $state('');
 
-  /** Command. Report runtime failures visibly and in the console. */
-  function report(problem) { console.error(problem); error = problem.message ?? String(problem); }
+  /** Command. Report errors locally with browser/build/graphics details; never upload telemetry. */
+  function report(problem) {
+    console.error(problem); error = problem.message ?? String(problem);
+    diagnostics = JSON.stringify({ build: import.meta.env.VITE_BUILD_ID ?? 'development', backend,
+      error, stack: problem.stack, browser: navigator.userAgent, secure: isSecureContext,
+      webgpu: Boolean(navigator.gpu), webxr: Boolean(navigator.xr), nativeWebGPUXR: typeof XRGPUBinding === 'function',
+    }, null, 2);
+    copyStatus = '';
+  }
+
+  /** Command. Copy the visible diagnostic report; report clipboard failure without losing it. */
+  async function copyDiagnostics() {
+    try {
+      await navigator.clipboard.writeText(diagnostics);
+      copyStatus = 'Copied';
+    } catch (problem) { console.error(problem); copyStatus = `Copy failed: ${problem.message}. Select the report below instead.`; }
+  }
 
   /** Command. Receive renderer/XR status without coupling those adapters to Svelte. */
   function status(state) {
     if ('mode' in state) mode = state.mode;
     if ('immersive' in state) immersive = state.immersive;
+    if ('backend' in state) backend = state.backend;
   }
 
   onMount(() => {
@@ -70,6 +87,11 @@
   </aside>
   {#if !ready && !error}<div class="notice" role="status">Loading sandbox & compiling shaders…</div>{/if}
   {#if immersive}<div class="notice">Look down in VR for controls. Pinch to select.</div>{/if}
-  {#if error}<div class="error" role="alert"><b>Cannot continue</b><p>{error}</p><button onclick={() => location.reload()}>Reload</button></div>{/if}
+  {#if error}<div class="error" role="alert"><b>Cannot continue</b><p>{error}</p>
+    <button onclick={() => location.reload()}>Reload</button>
+    <button onclick={copyDiagnostics}>Copy diagnostic report</button>
+    <p role="status">{copyStatus}</p>
+    <details><summary>Diagnostic report (stored only here)</summary><pre>{diagnostics}</pre></details>
+  </div>{/if}
   <footer>Original sandbox · standalone star coordinates · <a href="https://ryanndagreat.github.io/infinite_resolution_integral_noise_warping_code/web_demo_v3/">source demo</a></footer>
 </main>

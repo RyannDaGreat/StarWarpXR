@@ -1,24 +1,30 @@
 import { mat4 } from 'gl-matrix';
 import { createPresenter } from './presenter.js';
+import { createGPUPresenter } from './gpu-presenter.js';
+import { toGLProjection } from './projection.js';
 import { aimFromHand, panelHit, panelPose, poseRay, worldPose } from './math.js';
 
 const PANEL_WIDTH = 1200, PANEL_HEIGHT = 256, PANEL_GAP = 6;
 
 /**
  * Command. Start an immersive session with native pinch input and actual per-eye poses.
- * @param {object} options - Presentation canvas, WebGPU source canvas, floor spawn [x,y,z],
- * render(now,views,head), onshoot(origin,direction,fromHand), onteleport(origin,direction),
- * controls [{label,run}], onend() and onerror(error). Scene controls are supplied, never imported.
+ * @param {object} options - Canvas, WebGPU source canvas, shared xrCompatible device,
+ * floor spawn [x,y,z], render(now,views,head) -> GPUTexture, onshoot(origin,direction,fromHand),
+ * onteleport(origin,direction), controls [{label,run}], onend(), onerror(error), onbackend(name).
+ * Scene controls are supplied, never imported. Native GPU sessions use ZO projection;
+ * the scene/motion renderer receives converted GL matrices, the presenter receives native ZO.
  * @returns {Promise<object>} {session,end}; end() releases immersion idempotently.
  * @example await startXR(options) // {session: XRSession, end: Function}; requires a user gesture
  */
-export async function startXR({ canvas, source, spawn, render, onshoot, onteleport, controls, onend, onerror }) {
+export async function startXR({ canvas, source, device, spawn, render, onshoot, onteleport, controls, onend, onerror, onbackend = () => {} }) {
   const actions = [...controls, ...['Shoot', 'Teleport', 'Exit'].map(label => ({ label }))];
   if (!isSecureContext) throw new Error('VR needs trusted HTTPS (localhost is only valid on the same device).');
   if (!navigator.xr) throw new Error('WebXR is unavailable. Use Safari on Vision Pro with WebXR enabled.');
+  const nativeGPU = Boolean(device && typeof XRGPUBinding === 'function');
+  onbackend(nativeGPU ? 'Native WebGPU XR' : 'WebGL canvas-copy bridge');
   // This request must remain inside the original button gesture, before other awaits.
   const session = await navigator.xr.requestSession('immersive-vr', {
-    requiredFeatures: ['local-floor'],
+    requiredFeatures: nativeGPU ? ['local-floor', 'webgpu'] : ['local-floor'],
   });
   let presenter, ended = false, ending;
   const events = new AbortController();
@@ -36,11 +42,22 @@ export async function startXR({ canvas, source, spawn, render, onshoot, ontelepo
   }
   session.addEventListener('end', cleanup, { once: true });
   try {
-    presenter = createPresenter(canvas);
-    await presenter.gl.makeXRCompatible();
-    if (ended) throw new Error('XR session ended during startup');
-    const layer = new XRWebGLLayer(session, presenter.gl, { alpha: false, depth: false, antialias: false });
-    session.updateRenderState({ baseLayer: layer, depthNear: 0.1, depthFar: 10000 });
+    let layer;
+    if (nativeGPU) {
+      presenter = createGPUPresenter(device, session);
+      layer = presenter.layer;
+      session.updateRenderState({ layers: [layer], depthNear: 0.1, depthFar: 10000 });
+    } else {
+      // An ended XR layer must never leave stale GL state in the next session.
+      canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl2', { xrCompatible: true, alpha: false, antialias: false });
+      if (!gl) throw new Error('WebXR presentation requires WebGL 2');
+      await gl.makeXRCompatible();
+      if (ended) throw new Error('XR session ended during startup');
+      presenter = createPresenter(canvas);
+      layer = new XRWebGLLayer(session, gl, { alpha: false, depth: false, antialias: false });
+      session.updateRenderState({ baseLayer: layer, depthNear: 0.1, depthFar: 10000 });
+    }
     const reference = await session.requestReferenceSpace('local-floor');
     if (ended) throw new Error('XR session ended during startup');
     reference.addEventListener('reset', () => {
@@ -138,13 +155,15 @@ export async function startXR({ canvas, source, spawn, render, onshoot, ontelepo
           const views = Array.from(viewer.views, xrView => {
             const pose = worldPose(xrView.transform.matrix, origin);
             const view = mat4.invert(mat4.create(), pose);
-            const viewProj = mat4.multiply(mat4.create(), xrView.projectionMatrix, view);
-            return { xrView, eye: xrView.eye, viewProj, invViewProj: mat4.invert(mat4.create(), viewProj), ...poseRay(pose) };
+            const projection = nativeGPU ? toGLProjection(xrView.projectionMatrix) : xrView.projectionMatrix;
+            const viewProj = mat4.multiply(mat4.create(), projection, view);
+            const gpuViewProj = nativeGPU ? mat4.multiply(mat4.create(), xrView.projectionMatrix, view) : null;
+            return { xrView, eye: xrView.eye, viewProj, gpuViewProj, invViewProj: mat4.invert(mat4.create(), viewProj), ...poseRay(pose) };
           });
           if (views.length !== 2) throw new Error('This stereo bridge requires a two-view immersive headset.');
-          render(now, views, poseRay(head));
+          const image = render(now, views, poseRay(head));
           paintPanel();
-          presenter.upload(source, panelCanvas);
+          presenter.upload(nativeGPU ? image : source, panelCanvas);
           presenter.present(layer, views, panel);
         }
         session.requestAnimationFrame(frame);

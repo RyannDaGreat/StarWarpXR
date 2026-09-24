@@ -28,10 +28,17 @@ try {
     const actual = new Uint8Array(pixels.length);
     presenter.gl.readPixels(0,0,4,4,presenter.gl.RGBA,presenter.gl.UNSIGNED_BYTE,actual);
     const error = presenter.gl.getError();
+    const realGetError = presenter.gl.getError.bind(presenter.gl);
+    presenter.gl.getError = () => presenter.gl.INVALID_OPERATION;
+    let laterFailure;
+    try { presenter.upload(source, panel); }
+    catch (problem) { laterFailure = problem.message; console.log('Expected injected later-frame error:', laterFailure); }
+    presenter.gl.getError = realGetError;
     presenter.destroy(); device.destroy();
-    return { actual: Array.from(actual), error };
+    return { actual: Array.from(actual), error, laterFailure };
   });
   assert.equal(result.error, 0);
+  assert.match(result.laterFailure, /WebGPU canvas upload failed: 1282/);
   assert.deepEqual(result.actual.slice(0,4), [0,0,255,255], 'GL bottom-left must be source blue lower-left');
   assert.deepEqual(result.actual.slice(8,12), [255,255,0,255], 'GL bottom-right must be source yellow lower-right');
   assert.deepEqual(result.actual.slice(48,52), [255,0,0,255], 'GL top-left must be source red upper-left');
