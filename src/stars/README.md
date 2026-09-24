@@ -154,5 +154,9 @@ uploads against retained-upstream digests, and use a recording mock device to
 check allocation/ownership, no previous-state write bindings, seeds, count
 validation, mono/stereo pass order, cross-eye routing, active mask clear size,
 dispatch sizes and destruction. **The mock does not compile WGSL, execute GPU
-work or validate GPU numerical results.** Actual density, strength evolution,
-survivor counts, WebGPU validation and GPU scheduling require device-backed tests.
+work or validate GPU numerical results.** `npm run test:browser` additionally
+executes the WGSL on a real browser WebGPU device: zero-flow mono coordinates and
+metadata match their inputs byte-for-byte, previous coordinates remain unchanged,
+and stereo mask bits match survivor counters (1019 shared candidates for the
+1024-star/seed-777 fixture). This is not exhaustive verification of moving-field
+density/strength evolution, GPU scheduling, or cross-device numerical parity.

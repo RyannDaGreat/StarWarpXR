@@ -33,7 +33,15 @@ export async function createSandbox() {
     let accumulator = 0;
     let xrActive = false;
 
+    /** Command. Restore the sandbox while retaining slow-motion and XR state. */
+    function reset() {
+        physics.reset();
+        accumulator = 0;
+        physics.playerBody.setEnabled(!xrActive);
+    }
+
     return {
+        xrControls: [{ label: 'Reset', run: reset }],
         physics,
         spawn: [0, 0, 6],
 
@@ -125,11 +133,7 @@ export async function createSandbox() {
          * Command. Resets legacy physics and pending time while retaining XR/slow-motion mode.
          * @example scene.reset() // undefined; projectiles removed, 60 dominoes restored
          */
-        reset() {
-            physics.reset();
-            accumulator = 0;
-            physics.playerBody.setEnabled(!xrActive);
-        },
+        reset,
 
         /**
          * Command. Frees the Rapier world; the adapter must not be used afterward.

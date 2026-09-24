@@ -6,8 +6,11 @@ const PANEL_WIDTH = 1200, PANEL_HEIGHT = 256, PANEL_GAP = 6;
 
 /**
  * Command. Start an immersive session with native pinch input and actual per-eye poses.
- * @param {object} options - Scene-independent callbacks, canvas, spawn, error handler.
- * @returns {Promise<object>} Session controller; end() releases immersion.
+ * @param {object} options - Presentation canvas, WebGPU source canvas, floor spawn [x,y,z],
+ * render(now,views,head), onshoot(origin,direction,fromHand), onteleport(origin,direction),
+ * controls [{label,run}], onend() and onerror(error). Scene controls are supplied, never imported.
+ * @returns {Promise<object>} {session,end}; end() releases immersion idempotently.
+ * @example await startXR(options) // {session: XRSession, end: Function}; requires a user gesture
  */
 export async function startXR({ canvas, source, spawn, render, onshoot, onteleport, controls, onend, onerror }) {
   const actions = [...controls, ...['Shoot', 'Teleport', 'Exit'].map(label => ({ label }))];
@@ -71,7 +74,11 @@ export async function startXR({ canvas, source, spawn, render, onshoot, ontelepo
       context.fillText(notice, PANEL_WIDTH / 2, rowHeight * 1.5, PANEL_WIDTH - 24);
     }
 
-    /** Command. Handle any input source, including transient sources beyond indices 0/1. */
+    /**
+     * Command. Handle transient/controller selection without assuming stable source indices.
+     * @param {XRInputSourceEvent} event - Native selectstart with event-time poses.
+     * @example select(event) // undefined; activates a control or shoots/teleports
+     */
     function select(event) {
       try {
         const target = event.frame.getPose(event.inputSource.targetRaySpace, reference);
@@ -110,7 +117,12 @@ export async function startXR({ canvas, source, spawn, render, onshoot, ontelepo
       } catch (error) { onerror(error); }
     }
 
-    /** Command. Render one XR frame; tracking loss skips drawing without inventing poses. */
+    /**
+     * Command. Render one XR frame; skip drawing when tracking is unavailable.
+     * @param {number} now - Runtime timestamp, milliseconds.
+     * @param {XRFrame} xrFrame - Current tracked viewer/eye poses.
+     * @example frame(timestamp, xrFrame) // undefined; submits stereo and schedules next frame
+     */
     function frame(now, xrFrame) {
       if (ended) return;
       try {

@@ -93,7 +93,7 @@ function verifyControls() {
     const source = readFileSync(new URL('../src/scenes/sandbox/SceneControls.svelte', import.meta.url), 'utf8');
     const result = compile(source, {filename:'SceneControls.svelte'});
     assert.deepEqual(result.warnings, []);
-    assert.match(source, /bind:checked=\{scene.physics.slowMo\}/);
+    assert.match(source, /scene\.physics\.slowMo = event\.currentTarget\.checked/);
     assert.match(source, /onclick=\{onreset\}/);
 }
 

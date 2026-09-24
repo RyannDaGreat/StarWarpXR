@@ -69,7 +69,12 @@ export function createPresenter(canvas) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  /** Command. Upload a canvas into the selected texture; flips DOM top-left to GL UVs. */
+  /**
+   * Command. Upload a canvas; flip DOM top-left coordinates to GL UVs.
+   * @param {HTMLCanvasElement} source - Image (H,W,4), e.g. 768×1536 RGBA.
+   * @param {number} index - Owned texture slot (0 rendered image, 1 panel).
+   * @example upload(sourceCanvas, 0) // undefined; replaces the image texture
+   */
   function upload(source, index) {
     gl.bindTexture(gl.TEXTURE_2D, textures[index]);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -78,9 +83,20 @@ export function createPresenter(canvas) {
 
   return {
     gl,
-    /** Command. Upload rendered SBS image and a small control atlas to the GPU. */
+    /**
+     * Command. Upload the rendered image and control atlas to GPU textures.
+     * @param {HTMLCanvasElement} image - Left|right image (H,2W,4) RGBA, e.g. 768×1536.
+     * @param {HTMLCanvasElement} panel - Control atlas (H,W,4) RGBA, e.g. 256×1200.
+     * @example presenter.upload(sceneCanvas, controlCanvas) // undefined
+     */
     upload(image, panel) { upload(image, 0); upload(panel, 1); },
-    /** Command. Render each eye into its runtime-provided viewport, with a spatial panel. */
+    /**
+     * Command. Draw each eye and the spatial control panel into the XR framebuffer.
+     * @param {XRWebGLLayer} layer - Runtime framebuffer and viewport provider.
+     * @param {object[]} views - Eye labels, native xrView, and GL viewProj matrices (16,).
+     * @param {Float32Array} panelModel - Unit-panel world transform (16,).
+     * @example presenter.present(layer, views, panelPose(head)) // undefined
+     */
     present(layer, views, panelModel) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
       gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.SCISSOR_TEST);
